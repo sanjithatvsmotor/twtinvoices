@@ -106,3 +106,65 @@ class sendMailCustom():
 
 
 
+import cv2
+import argparse
+import numpy as np
+import threading
+import os
+import smtplib
+from os.path import basename
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+# from email.utils import COMMASPACE, formatdate
+from email.mime.base import MIMEBase
+from email import encoders
+import sql_con
+import re
+import Config
+
+class sendMailCustom():
+    def main1(file, exceptionMessage, filename, filepath, loc, exceptionShort, processingType, vendorcode, invoiceno,
+             invoicedate, Pages, Filesize):
+        try:
+            print(invoiceno, invoicedate)
+            exceptionMessage = re.sub(r"[']", "", exceptionMessage)
+            sql = "set dateformat dmy;insert into RPA_FI_Invoice_Exceptions (filename,ExceptionDescription,filepath,moddate,loc,exceptionType,processingType,vendorcode,invoiceno,invoicedate,project,Pages,Filesize) values ('" + filename + "','" + exceptionMessage + "','" + filepath + "',getdate(),'" + loc + "','" + exceptionShort + "','" + processingType + "','" + vendorcode + "','" + invoiceno + "','" + invoicedate + "','ID','" + Pages + "','" + Filesize + "');"
+
+            sql_con.mssql_insert_data(sql, Config.VisionDriver)
+
+            if (exceptionShort != "Duplicate Found"):
+                server = "smtp.sendgrid.net"
+                smtp_port = 25
+                smtp_username = "apikey"
+                smtp_password = "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"
+
+                send_from = "sanjitha.rajesh@tvsmotor.com"
+
+                subject1 = "Invoice Digitization Automation Exception : " + str(
+                    exceptionShort) + " " + str(loc) + " - " + str(processingType)
+                body1 = '<p style=COLOR: blue;FONT-WEIGHT: bold;><b style=FONT-WEIGHT: bold; TEXT-TRANSFORM: capitalize; COLOR: blue; FONT-STYLE: italic; ><font color=blue >Dear Team,<br>This is to inform you that while processing scanned invoice an automated system has encountered exception for vendor code ' + vendorcode + '. The exception is as follows: <br/><br/>' + exceptionMessage + '<br/><br/>Same file can be accessed through the server using path: ' + filepath + filename + '.pdf <br/><br/>Kindly make sure the invoice is properly scanned, please contact patil.samiksha@tvsmotor.com for any sort of clarification.<br/><br/><b>Regards,</b><br/>Team ID Automation<br/>DO NOT REPLY!</p>'
+                send_to = "sanjitha.rajesh@tvsmotor.com, anwesh.sahoo@tvsmotor.com"
+
+                msg = MIMEMultipart()
+                msg['From'] = send_from
+                msg['To'] = send_to
+                msg['Subject'] = subject1
+                msg.attach(MIMEText(body1, 'html'))
+
+                print("Send mail file : ", file)
+                if file != '':
+                    part = MIMEBase('application', "octet-stream")
+                    part.set_payload(open(file, "rb").read())
+                    encoders.encode_base64(part)
+                    part.add_header('Content-Disposition', 'attachment; filename=ExceptionInvoice.pdf')
+                    msg.attach(part)
+
+                smtp = smtplib.SMTP(server, smtp_port)
+                smtp.starttls()
+                smtp.login(smtp_username, smtp_password)
+                smtp.sendmail(send_from, send_to.split(','), msg.as_string())
+                smtp.close()
+                print("Mail sent!")
+        except Exception as ee:
+            print("SendMail Exception : ", str(ee))
