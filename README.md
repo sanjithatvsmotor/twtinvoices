@@ -14,3 +14,13 @@ Other files needed for the code to run:
 4. sql_con.ipynb
 5. SendMails.ipynb
 6. DB.ipynb
+
+
+ScannedInvoices.py: 
+Functions: Class RecognizeCustomForms()-> fn recognize_custom_forms: imp function that deals with vendorCode. If vendorCode is not null, then it calls the Ecopy_CustModel.py file which contains the code to extract QR information and store it in the SQL table RPA_FI_Invoice_MainData/Exceptions depending on result, and also stores it in SAP. If the vendorCode variable is null, it goes into exception and calls the stored procedure RPA_FI_InvoiceDetails which handles the exception. The vendorCode here is in the name of the pdf file, for example if filename= Invoice-14.pdf, vendorCode=14. Following this, a mail is also sent using the SendMails.py file which contains sendMailsCustom.main1 function. 
+PortalInvoices(): This function is the first function called in main(), which in turn calls the recognize_custom_forms() function. Responsible for creating the threads. It is one of two types of invoices, this being PortalInvoices processing type, and the other being ScannedInvoices.
+
+
+Ecopy_CustModel.py: 
+Functions: recognize_custom_forms: 
+
