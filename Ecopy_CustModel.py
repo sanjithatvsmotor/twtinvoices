@@ -26,8 +26,8 @@ import shutil
 from datetime import datetime
 from datetime import date
 from Config import serverFileBackupPath_mysore
-from azure.core.credentials import AzureKeyCredential
-from azure.ai.formrecognizer import FormRecognizerClient
+#from azure.core.credentials import AzureKeyCredential
+#from azure.ai.formrecognizer import FormRecognizerClient
 from shutil import copyfile
 from PyPDF2 import PdfFileWriter, PdfFileReader
 import Config
@@ -59,36 +59,37 @@ class RecognizeCustomForms():
         Overall_output = ""
         exceptionWE_g = ""
         location = ""
+        dupl = pd.DataFrame()
+        UniqueId = ""
         
-
+        #Date modified: 25/02/24, 
+        #Purpose: To generate QR code information from any page of a PDF, 
+        #Modified by: sanjitha.rajesh@tvsmotor.com, 
+        #Lines: 64-150
+        
         maa = datetime.datetime.now()
         sm = str(maa)[0:19]
         sm = sm.replace(':', '_').replace(' ', '_').replace('-', '_')
-
         destination = Config.destination
         ProgramRemarks = ""
         start_time = time.time()
-
-        #filenameNom = "D:\\invoice\\to\\" + "0_" + Path(filepath).name
-        filenameNom = os.path.join(Config.serverFileBackupPath_mysore, "0_" + Path(filepath).name)
-        shutil.copyfile(filepath, filenameNom)
         
         try:
             with open(filepath, 'rb') as f:
                 pdf_bytes = BytesIO(f.read())
                 pdf_all_pages = pdfium.PdfDocument(pdf_bytes)
-
                 for page_number, this_pg in enumerate(pdf_all_pages):
+                    print(page_number)
                     decoded_list = []
-                    for scale_value in range(1, 6, 1):
+                    for scale_value in range(1, 8, 1):
                         pil_image = this_pg.render(scale=scale_value).to_pil()
                         np_arr_img = np.array(pil_image)
                         cpp_result = zxingcpp.read_barcodes(np_arr_img)
-
+                        print(len(cpp_result))
                         if len(cpp_result) > 0:
                             decoded_list = [str(d_str.text) for d_str in cpp_result]
                             print(f"Decoded list (Page {page_number + 1}, Scale {scale_value}) for PDF: {filepath}")
-
+                            print(len(decoded_list))
                             for items in decoded_list:
                                 try:
                                     decoded_token = jwt.decode(items.strip(), algorithms=["RS256"],
@@ -96,7 +97,7 @@ class RecognizeCustomForms():
                                     data = decoded_token["data"]
                                     data_dict = json.loads(data)
                                     print("Decoded successfully")
-                                    #print("Output result: ", data_dict)
+                                    print("Output result: ", data_dict)
 
                                 except jwt.ExpiredSignatureError:
                                     print("Expired token")
@@ -104,83 +105,77 @@ class RecognizeCustomForms():
                                     print(f"Invalid token: {e}")
                                 except Exception as ee:
                                     print("Not able to decode:", ee)
+                                    
+                            print("data_dict here",data_dict)
+                            print("-----------------------",len(data_dict),"---------------------------------")
+                            if len(data_dict)>0:
+                                inv_total = data_dict['TotInvVal']
+                                seller_gst = data_dict['SellerGstin']
+                                buyer_gst = data_dict['BuyerGstin']
+                                inv_no = data_dict['DocNo']
+                                inv_dt = data_dict['DocDt']
+                                hsn = data_dict['MainHsnCode']
+                                irn = data_dict['Irn']
 
-                            break
+                                inv_dt = parse(inv_dt, fuzzy=True, dayfirst=True)
 
-                    if data_dict:
-                        break
+                                UniqueId = str(vendorCode) + "_" + str(inv_no) + "_" + str(inv_dt.strftime('%Y%m%d'))
+                                UniqueId = UniqueId.replace('/', '-')
+                                #vendorCode = ""
+                                print("Printing in Ecopy_CustModel: ", vendorCode)
+                                if UniqueId != "":
+                                    sqlCheckDuplicate = "set dateformat dmy;exec RPA_FI_InvoiceDetails @querytype= '3', @invoiceno='" + inv_no + "',@invoicedate='" + str(inv_dt) + "',@VendorName='" + vendorCode + "',@typeCateg='Invoice_extractedData'"
+                                    dupl = sql_con.mssql_read_data(sqlCheckDuplicate, Config.VisionDriver)
+                                    Overall_output = ""
+                                    print("Output result: ", data_dict)
+                                    
+                                    
+                                #checking whether any duplicate is there of PDF via stored procedure RPA_FI_Invoice_Details
+                                
+                            
+                            #if len(data_dict) <= 0
+                    try:
+                        if len(data_dict) == 0:
+                            print("No QR code found in the PDF, storing data in RPA_FI_Invoice_Exceptions.")
+                            sqlCheckDuplicateException = "SELECT COUNT(*) FROM RPA_FI_Invoice_Exceptions WHERE invoiceno = '{}' AND InvoiceDate = '{}'".format(inv_no, inv_dt)
+                            duplicate_count = sql_con.mssql_read_data(sqlCheckDuplicateException, Config.VisionDriver)
+                            if duplicate_count.iloc[0, 0] == 0:  # If no duplicates found
+                  
+                                SendMails.sendMailCustom.main1(filepath, exceptionWE_g, sm, Config.serverFileBackupPath_mysore, location, 
+                                                                "QR Code Not Readable / Not Found",processingType,vendorCode,inv_no,inv_dt,
+                                                                str('0'),str('0'))
+
+                                filenameNom = os.path.join("D:\\", destination, "0_" + Path(filepath).name)
+
+                                shutil.move(filepath, filenameNom)
+                                sys.exit(1)
+                            else:
+                                print("Duplicate exception found in the database, skipping...")
+                                
+
+                    except Exception as e:
+                        print( e )
+                    #break
+
+                    #if data_dict:
+                        #break
 
                 if data_dict is None:
                     print("No QR code found in the PDF.")
+                    
 
         except Exception as ex:
             print("Exception handled:", ex)
             
-        if len(data_dict)>0:
-            inv_total = data_dict['TotInvVal']
-            seller_gst = data_dict['SellerGstin']
-            buyer_gst = data_dict['BuyerGstin']
-            inv_no = data_dict['DocNo']
-            inv_dt = data_dict['DocDt']
-            hsn = data_dict['MainHsnCode']
-            irn = data_dict['Irn']
+        filenameNom = os.path.join("D:\\", destination, "0_" + Path(filepath).name)
+        shutil.move(filepath, filenameNom)
 
-            inv_dt = parse(inv_dt, fuzzy=True, dayfirst=True)
-
-            UniqueId = str(vendorCode) + "_" + str(inv_no) + "_" + str(inv_dt.strftime('%Y%m%d'))
-            UniqueId = UniqueId.replace('/', '-')
-
-            sqlCheckDuplicate = "set dateformat dmy;exec RPA_FI_InvoiceDetails @querytype= '3', @invoiceno='" + inv_no + "',@invoicedate='" + str(
-                inv_dt) + "',@VendorName='" + vendorCode + "',@typeCateg='Invoice_extractedData'"
-
-            dupl = sql_con.mssql_read_data(sqlCheckDuplicate, Config.VisionDriver)
-            Overall_output = ""
-            print("Output result: ", data_dict)
-        if len(data_dict) <= 0:
-             print("No QR code found in the PDF, storing data in RPA_FI_Invoice_Exceptions.")
-             SendMails.sendMailCustom.main1(filepath, exceptionWE_g, sm, Config.serverFileBackupPath_mysore, location, 
-                                            "QR Code Not Readable / Not Found",processingType,vendorCode,inv_no,inv_dt,
-                                            str('0'),str('0'))
-             sys.exit(1)
-                
-        if dupl.empty:
+        if dupl is not None and dupl.empty:
+            
             #digital sign validation, pdf as input to e-mudra api in B64 format, checking whether sign is valid/invalid
             #if valid then push data to SAP and SQL, else create exception "Sign not valid"
-
-            '''try:
-                pdf_data = None
-                with open(filepath, 'rb') as pdf_file:
-                    pdf_data = pdf_file.read()
-                pdf_data_base64 = base64.b64encode(pdf_data).decode('utf-8')
-                digital_signature_b64 = extract_digital_signature(pdf_data_base64)
-
-                api_endpoint = 'http://10.121.4.251:8080/emas2/services/dsverifyWS'
-                #api_key = 'your_api_key'
-
-                headers = {
-                    #'Authorization': f'Bearer {api_key}',
-                    'Content-Type': 'application/json',
-                }
-
-                payload = {
-                    'digital_signature': digital_signature_b64,
-                }
-
-                response = requests.post(api_endpoint, json=payload, headers=headers)
-
-                if response.status_code == 200:
-                    verification_response = response.text
-                else:
-                    raise Exception(f"API call failed with status code {response.status_code}: {response.text}")
-
-            except Exception as ex:
-                print(f"Exception during digital signature validation and data pushing: {ex}")
-
-
-            #print("process invoice further - unique combination")
-
-            ######sap api payload format to be done #############
-'''
+            
+        #Modified Date: Before 16/02/24, Modified by: Piyush Chandra, (Initial code)
             nested_dict=[
                             {
                                 "INV_NO": str(inv_no),
@@ -201,6 +196,7 @@ class RecognizeCustomForms():
             #print(inputJson)
             r = json.dumps( inputJson )
 
+            #Purpose of code: Storing QR data in SAP and sending mails, Lines: 179-293
             try:
                 print( "------SAP API start --------" )
                 try:
@@ -230,8 +226,14 @@ class RecognizeCustomForms():
             if ProgramRemarks == "":
                 print("before insertion")
                 proPara="set dateformat dmy;exec RPA_FI_InvoiceDetails @typeCateg='Invoice_extractedData',@querytype='2', @InvoiceNo='"+str(inv_no)+"',@InvoiceDate='"+str(inv_dt)+"',@VendorCode='"+str(vendorCode)+"',@IRNNo='"+str(irn)+"',@SupGSTINNo='"+str(seller_gst)+"',@HSNCode='"+str(hsn)+"',@InvoiceTotal='"+str(inv_total)+"',@BillToGSTINNo='"+str(buyer_gst)+"',@UniqueId='" + str(UniqueId) + "',@loc='"+ str(location)+"',@SAPOutput='" +  str(Overall_output) + "',@processingTime='" + str(time.time() - start_time ) + "',@processingType='"+str(processingType)+"',@email='"+str(email)+"',@mailSubject='"+str(emailsubject)+"',@mailReceivedOn='"+ str(mailReceivedOn)+"',@DataRowType='Header'; "
-
-                sql_con.mssql_insert_data( proPara,Config.VisionDriver )
+                
+                
+                print("storing data_1")
+                print("Unique ID here",UniqueId)   
+                if UniqueId != "" :
+                    sql_con.mssql_insert_data( proPara,Config.VisionDriver )
+                    
+                
             else:
                 print( "Exception captured by program" )
                 print( "duplicate present in database so skipped push to SAP as well as DB!" )
@@ -312,25 +314,3 @@ class RecognizeCustomForms():
 
                  #print( "Exception backup taken!" )
                  print( "Exception inside exception: handled" )
-
-    # if __name__=="__main__":
-    #     RecognizeCustomForms.recognize_custom_forms()
-
-if __name__ == "__main__":
-    #custom_form_recognizer = RecognizeCustomForms()
-
-    filepath = "D:\\invoice\\from\\Invoice-35.pdf"
-    email = "sanjitha.rajesh@tvsmotor.com"
-    emailsubject = "QR Invoice"
-    mailReceivedOn = "2024-03-06"  
-    locationPO = None  
-    processingType = "PortalInvoices"
-    vendorCode = "1234"
-    
-    custom_form_recognizer = RecognizeCustomForms()
-
-    
-    result = custom_form_recognizer.recognize_custom_forms(filepath, email, emailsubject, mailReceivedOn, locationPO, processingType, vendorCode)
-    
-    
-    #print("Output Result:", result)
